@@ -8,7 +8,7 @@ Built for the Meta Global AI Developer Hackathon · Theme: *Build for Your World
 
 - Demo video: https://youtu.be/Dy8ecIZcBLw
 - Live demo (message this WhatsApp number): https://wa.me/256767535525
-- Workflow exports: see the `workflows` folder in this repository
+- Workflow exports:    - Workflow exports: the `.json` files in the root of this repository (the main engine, the payments workflow and the market intelligence tool)
 
 ---
 
