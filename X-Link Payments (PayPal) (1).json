@@ -1,0 +1,1789 @@
+{
+  "name": "X-Link Payments (PayPal)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "xlink-checkout",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "3f191a28-b04e-4a64-a183-e39ed100f660",
+      "name": "Checkout Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        -192
+      ],
+      "webhookId": "a1c4e7f2-9b35-4d68-8e01-3f5a7c2d9b64"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = ($input.first().json && $input.first().json.body) || $input.first().json || {};\n// The amount can arrive as a number, as \"11.17\", or with a currency symbol in front. It is\n// read the way a shopper's browser sends it, because an amount that parsed to 0 used to reach\n// PayPal as an empty string and the payment died with a 400 INVALID_REQUEST.\nconst rawAmount = body.amount_usd !== undefined ? body.amount_usd : body.total_usd;\nconst cleanedAmount = String(rawAmount === undefined || rawAmount === null ? '' : rawAmount).replace(/[^0-9.]/g, '');\nconst amount = Number(cleanedAmount);\nconst slug = String(body.slug || '').trim();\nconst orderId = 'ORD-' + Date.now().toString(36).toUpperCase() + '-' + Math.floor(Math.random() * 900 + 100);\n\n// THE MONEY THE BUYER SAW IS THE MONEY THAT IS CHARGED.\n// The shop sends the amount already expressed in the currency it will be charged in, plus the\n// amount in the shop's own shillings and the figure the buyer read on the page. PayPal only\n// accepts a fixed list of currencies (the Ugandan shilling is NOT one of them - it answers\n// CURRENCY_NOT_SUPPORTED), so the currency is validated here rather than passed through blindly.\nconst PAYPAL_CURRENCIES = ['USD','EUR','GBP','AUD','CAD','CHF','HKD','JPY','MXN','NZD','NOK','PHP','PLN','RUB','SEK','SGD','THB','TWD','CZK','DKK','HUF','ILS','MYR','BRL'];\nconst requested = String(body.currency || 'USD').toUpperCase();\nconst chargeCurrency = PAYPAL_CURRENCIES.indexOf(requested) >= 0 ? requested : 'USD';\nconst amountLocal = Number(String(body.amount_local === undefined ? '' : body.amount_local).replace(/[^0-9.]/g, '')) || 0;\nconst displayCurrency = String(body.display_currency || '').toUpperCase();\nconst displayAmount = String(body.display_amount || '');\n\nif (!isFinite(amount) || amount <= 0 || !slug) {\n  // No order is created and PayPal is never called, so nothing can be half-charged.\n  return [{ json: { ok: false, order_failed: true, status: 'FAILED', error: 'A positive amount_usd and a slug are required.', amount_seen: String(rawAmount === undefined ? '' : rawAmount) } }];\n}\n\nreturn [{\n  json: {\n    ok: true,\n    order_id: orderId,\n    slug: slug,\n    merchant_name: String(body.merchant_name || ''),\n    buyer_phone: String(body.buyer_phone || '').replace(/[^0-9]/g, ''),\n    buyer_name: String(body.buyer_name || 'Customer'),\n    amount_usd: amount.toFixed(2),\n    currency: chargeCurrency,\n    amount_local: amountLocal.toFixed(2),\n    display_currency: displayCurrency,\n    display_amount: displayAmount,\n    items_summary: String(body.items_summary || '').slice(0, 500)\n  }\n}];"
+      },
+      "id": "6a639367-b4d3-457e-b502-09a182f5bf4a",
+      "name": "Prepare Checkout",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ok-check",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0e5f5c1d-6a37-4b2a-9d84-5c71f0b3a2d6",
+      "name": "Order Amount Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        512,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api-m.sandbox.paypal.com/v1/oauth2/token",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "grant_type",
+              "value": "client_credentials"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4751c4c2-47f6-41a3-bf32-21c398d17a09",
+      "name": "Get PayPal Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        736,
+        16
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "lch9SPD28dhLp8cd",
+          "name": "PayPal Sandbox (Client ID + Secret)"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api-m.sandbox.paypal.com/v2/checkout/orders",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get PayPal Token').first().json.access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"intent\": \"CAPTURE\",\n  \"purchase_units\": [\n    {\n      \"reference_id\": \"{{ String($('Prepare Checkout').first().json.order_id || 'XL-ORDER') }}\",\n      \"description\": \"X-Link order {{ String($('Prepare Checkout').first().json.order_id || '') }}{{ $('Prepare Checkout').first().json.display_amount ? ' - ' + String($('Prepare Checkout').first().json.display_amount) : '' }}\",\n      \"amount\": {\n        \"currency_code\": \"{{ String($('Prepare Checkout').first().json.currency || 'USD') }}\",\n        \"value\": \"{{ String($('Prepare Checkout').first().json.amount_usd || '') }}\"\n      }\n    }\n  ],\n  \"application_context\": {\n    \"brand_name\": \"X-Link\",\n    \"user_action\": \"PAY_NOW\",\n    \"return_url\": \"https://orchid-frigatebird.pikapod.net/webhook/xlink-pay-return\",\n    \"cancel_url\": \"https://orchid-frigatebird.pikapod.net/webhook/xlink-pay-cancel\"\n  }\n}",
+        "options": {}
+      },
+      "id": "41e1e281-c074-4495-8fe6-10a42ddef3be",
+      "name": "Create PayPal Order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "5vvfNGgL7vW4bNbm"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_id": "={{ $('Prepare Checkout').first().json.order_id }}",
+            "slug": "={{ $('Prepare Checkout').first().json.slug }}",
+            "merchant_name": "={{ $('Prepare Checkout').first().json.merchant_name }}",
+            "buyer_phone": "={{ $('Prepare Checkout').first().json.buyer_phone }}",
+            "buyer_name": "={{ $('Prepare Checkout').first().json.buyer_name }}",
+            "amount_usd": "={{ $('Prepare Checkout').first().json.amount_usd }}",
+            "currency": "={{ $('Prepare Checkout').first().json.currency }}",
+            "amount_local": "={{ $('Prepare Checkout').first().json.amount_local }}",
+            "display_currency": "={{ $('Prepare Checkout').first().json.display_currency }}",
+            "status": "PENDING",
+            "paypal_order_id": "={{ $json.id }}",
+            "items_summary": "={{ $('Prepare Checkout').first().json.items_summary }}",
+            "created_date": "={{ $now.toISO() }}",
+            "paid_date": "",
+            "last_error": "={{ $json.name ? String($json.name) + ': ' + String($json.message || \"\") : \"\" }}"
+          },
+          "schema": [
+            {
+              "id": "order_id",
+              "displayName": "order_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "slug",
+              "displayName": "slug",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "merchant_name",
+              "displayName": "merchant_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "buyer_phone",
+              "displayName": "buyer_phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "buyer_name",
+              "displayName": "buyer_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "amount_usd",
+              "displayName": "amount_usd",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "paypal_order_id",
+              "displayName": "paypal_order_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "items_summary",
+              "displayName": "items_summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_date",
+              "displayName": "created_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "paid_date",
+              "displayName": "paid_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_error",
+              "displayName": "last_error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8a663713-d8d3-401c-9ddd-111ac575538b",
+      "name": "Record Pending Order",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1184,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prep = $('Prepare Checkout').first().json;\nlet paypal = {};\ntry { paypal = $('Create PayPal Order').first().json || {}; } catch (e) {}\n\nlet approveUrl = '';\nconst links = Array.isArray(paypal.links) ? paypal.links : [];\n// An order that never got as far as PayPal carries its own reason; that reason is what the\n// buyer and the page see.\nconst prepFailed = prep.ok === false;\nconst failureReason = prepFailed ? String(prep.error || 'The order could not be started.') : '';\nfor (const l of links) {\n  if (l && (l.rel === 'approve' || l.rel === 'payer-action')) { approveUrl = l.href; break; }\n}\n\nreturn [{\n  json: {\n    ok: Boolean(approveUrl),\n    order_id: prep.order_id,\n    amount_usd: prep.amount_usd,\n    currency: prep.currency,\n    amount_local: prep.amount_local,\n    display_currency: prep.display_currency,\n    display_amount: prep.display_amount,\n    paypal_order_id: paypal.id || '',\n    approve_url: approveUrl,\n    status: approveUrl ? 'AWAITING_APPROVAL' : 'FAILED',\n    error: approveUrl ? '' : (failureReason || 'PayPal did not return an approval link.')\n  }\n}];"
+      },
+      "id": "224e8b20-d5fa-4784-9db2-b67de9e88e06",
+      "name": "Build Checkout Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "7d69a67f-b6df-49a3-a5c0-8a6373fae4eb",
+      "name": "Respond Checkout",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        752,
+        -192
+      ]
+    },
+    {
+      "parameters": {
+        "path": "xlink-pay-return",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "d1b62e65-a1ac-41dc-828a-5d4e295bb15c",
+      "name": "Capture Return",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        32
+      ],
+      "webhookId": "b2d5f8a3-0c46-4e79-9f12-4a6b8d3e0c75"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "5vvfNGgL7vW4bNbm"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "paypal_order_id",
+              "keyValue": "={{ $json.query.token }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "id": "9a0af307-d75e-416c-b361-be546fa685da",
+      "name": "Load Order For Capture",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        288,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api-m.sandbox.paypal.com/v1/oauth2/token",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "grant_type",
+              "value": "client_credentials"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fd63a598-eb87-4c78-9707-34d062f10da5",
+      "name": "Get PayPal Token For Capture",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        512,
+        160
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "lch9SPD28dhLp8cd",
+          "name": "PayPal Sandbox (Client ID + Secret)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api-m.sandbox.paypal.com/v2/checkout/orders/{{ $('Load Order For Capture').first().json.paypal_order_id }}/capture",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get PayPal Token For Capture').first().json.access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {}
+      },
+      "id": "a9f1173a-1c9a-49ba-ba96-724663b03f03",
+      "name": "Capture PayPal Payment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        736,
+        160
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "5vvfNGgL7vW4bNbm"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "paypal_order_id",
+              "keyValue": "={{ $('Load Order For Capture').first().json.paypal_order_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "={{ $json.status === \"COMPLETED\" ? \"PAID\" : \"FAILED\" }}",
+            "paid_date": "={{ $json.status === \"COMPLETED\" ? $now.toISO() : \"\" }}",
+            "last_error": "={{ $json.status === \"COMPLETED\" ? \"\" : String((($json.error || {}).message) || $json.message || $json.name || \"capture failed\") }}"
+          },
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "paid_date",
+              "displayName": "paid_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_error",
+              "displayName": "last_error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "14530345-ab2b-4dd4-9051-5337c5a8859d",
+      "name": "Update Order After Capture",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const NL = String.fromCharCode(10);\nconst order = $('Load Order For Capture').first().json || {};\n// PayPal's own answer to the capture is what decides paid or not. It is read by node name: the\n// node just upstream only returns the updated DB row, whose status is PAID/FAILED rather than\n// PayPal's COMPLETED, and judging on that told a paying buyer their payment had failed.\nlet captured = {};\ntry { captured = $('Capture PayPal Payment').first().json || {}; } catch (e) { captured = {}; }\n\n// A capture that PayPal says is already done counts as paid - the money did move, and telling\n// the buyer it failed would be a lie.\nconst rawStatus = String(captured.status || '').toUpperCase();\nconst blob = String((captured.error && captured.error.issue) || (captured.error && captured.error.message) || captured.message || '').toUpperCase();\nconst paid = rawStatus === 'COMPLETED' || blob.indexOf('ALREADY_CAPTURED') >= 0;\n\nconst currency = String(order.currency || 'USD').toUpperCase();\nconst amount = Number(order.amount_usd || 0);\nconst charged = currency + ' ' + amount.toFixed(2);\nconst items = String(order.items_summary || '')\n  .split(NL)\n  .map(function (l) { return l.trim(); })\n  .filter(function (l) { return l && l.indexOf('Cart items') !== 0 && l.indexOf('Total') !== 0; });\n\nconst lines = [];\nif (paid) {\n  lines.push('PAYMENT RECEIVED');\n  lines.push('');\n  lines.push('Order: ' + String(order.order_id || ''));\n  if (items.length) {\n    lines.push('');\n    lines.push('Items:');\n    for (const it of items) { lines.push(it); }\n  }\n  lines.push('');\n  lines.push('Charged: ' + charged);\n  lines.push('This was TEST MODE - no real money moved.');\n  lines.push('');\n  lines.push('Your order is confirmed and the seller has been notified.');\n} else {\n  lines.push('PAYMENT NOT COMPLETED');\n  lines.push('');\n  lines.push('Order: ' + String(order.order_id || ''));\n  lines.push('No money was taken.');\n  lines.push('Please try again, or choose Cash on Delivery.');\n}\n\nreturn [{ json: { paid: paid, message_text: lines.join(NL), recipient: String(order.buyer_phone || ''), order_id: String(order.order_id || '') } }];"
+      },
+      "id": "55098325-fce0-477c-abd5-5e83d8aaa1de",
+      "name": "Build Payment Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "1119496204589979",
+        "recipientPhoneNumber": "={{ $json.recipient }}",
+        "textBody": "={{ $json.message_text }}",
+        "additionalFields": {}
+      },
+      "id": "ca558495-8bda-4a81-b755-025a70a8f360",
+      "name": "Confirm Buyer On WhatsApp",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        1408,
+        160
+      ],
+      "webhookId": "be950d0b-29f0-46af-b05c-07256fde695b",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "pbR9gFp6w45IehD0",
+          "name": "WhatsApp account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ (function () {\n  var pm = $('Build Payment Message').first().json || {};\n  var o = $('Load Order For Capture').first().json || {};\n  var paid = pm.paid === true;\n  var cur = String(o.currency || 'USD');\n  var amt = Number(o.amount_usd || 0);\n  var amount = cur + ' ' + (isFinite(amt) ? amt.toFixed(2) : '0.00');\n  var orderId = String(o.order_id || '');\n  var shopName = String(o.merchant_name || o.store_slug || o.slug || 'this shop');\n  var slug = String(o.slug || '');\n  var shopUrl = 'https://orchid-frigatebird.pikapod.net/webhook/storefront?slug=' + encodeURIComponent(slug);\n  function esc(v) {\n    return String(v == null ? '' : v).replace(/[&<>\"]/g, function (ch) {\n      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[ch];\n    });\n  }\n  var title = paid ? 'Payment successful' : 'Payment not completed';\n  var line1 = paid\n    ? 'Thank you - your order is confirmed and ' + esc(shopName) + ' has been notified.'\n    : 'No money was taken. You can try again, or pay ' + esc(shopName) + ' directly.';\n  var iconClass = paid ? 'icon ok' : 'icon bad';\n  var iconMark = paid ? '&#10003;' : '!';\n  var css = [\n    'body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#f4f6fb;margin:0;padding:44px 18px;color:#101828;}',\n    '.card{max-width:480px;margin:0 auto;background:#fff;border-radius:18px;padding:34px 26px;text-align:center;box-shadow:0 14px 34px rgba(16,24,40,.09);}',\n    '.icon{width:68px;height:68px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:32px;margin:0 auto 18px;}',\n    '.ok{background:#dcfce7;color:#15803d;}',\n    '.bad{background:#fee2e2;color:#b91c1c;}',\n    'h1{font-size:1.45rem;margin:0 0 8px;letter-spacing:-.01em;}',\n    'p{color:#475569;font-size:.96rem;line-height:1.6;margin:0 0 10px;}',\n    '.facts{text-align:left;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;margin:18px 0;font-size:.92rem;}',\n    '.facts div{display:flex;justify-content:space-between;gap:12px;padding:4px 0;}',\n    '.facts span:first-child{color:#64748b;}',\n    '.facts span:last-child{font-weight:700;text-align:right;word-break:break-word;}',\n    '.btn{display:block;width:100%;box-sizing:border-box;padding:14px 18px;border-radius:999px;font-weight:800;font-size:.95rem;text-decoration:none;margin-bottom:10px;}',\n    '.btn-shop{background:#003087;color:#fff;}',\n    '.note{font-size:.8rem;color:#94a3b8;margin-top:14px;line-height:1.5;}'\n  ].join('');\n  var head = '<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">'\n    + '<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">'\n    + '<title>' + esc(title) + '</title><style>' + css + '</style></head><body>'\n    + '<div class=\"card\">'\n    + '<div class=\"' + iconClass + '\">' + iconMark + '</div>'\n    + '<h1>' + esc(title) + '</h1>'\n    + '<p>' + line1 + '</p>'\n    + '<div class=\"facts\">'\n    + '<div><span>Order</span><span>' + esc(orderId || 'not recorded') + '</span></div>'\n    + '<div><span>Shop</span><span>' + esc(shopName) + '</span></div>'\n    + '<div><span>Charged</span><span>' + esc(amount) + '</span></div>'\n    + '</div>'\n    + '<a class=\"btn btn-shop\" href=\"' + esc(shopUrl) + '\">Back to the shop</a>'\n    + '<div class=\"note\">This shop runs in TEST MODE - no real money moved.</div>'\n    + '</div></body></html>';\n  return head;\n})() }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "0b821b80-334c-4f7b-9d98-c53b9452587f",
+      "name": "Respond Capture",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        752,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "path": "xlink-confirm",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "993cf233-dbac-4e9f-967d-142161b1f455",
+      "name": "Merchant Confirm",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        928
+      ],
+      "webhookId": "c9e2a5b0-7d14-4f46-a089-1b3c5e8f4d62"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "5vvfNGgL7vW4bNbm"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_id",
+              "keyValue": "={{ $json.query.token }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "id": "c329ec3e-77d1-4d76-a1d3-609d181159c9",
+      "name": "Load Order To Confirm",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        288,
+        1056
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "5vvfNGgL7vW4bNbm"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_id",
+              "keyValue": "={{ $json.order_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "PAID",
+            "paid_date": "={{ $now.toISO() }}",
+            "last_error": "Merchant confirmed receipt"
+          },
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "paid_date",
+              "displayName": "paid_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_error",
+              "displayName": "last_error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c6cb61cc-0d02-4fb6-a164-3f71e1cf0202",
+      "name": "Mark Order Paid",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        512,
+        1056
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "1119496204589979",
+        "recipientPhoneNumber": "={{ $('Load Order To Confirm').first().json.buyer_phone }}",
+        "textBody": "=Payment confirmed for order {{ $('Load Order To Confirm').first().json.order_id }}. Thank you - the merchant has received your payment and will fulfil your order.",
+        "additionalFields": {}
+      },
+      "id": "a86be70b-de2e-41a6-a2ec-b6ba699cdabf",
+      "name": "Tell Buyer Confirmed",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        736,
+        1056
+      ],
+      "webhookId": "6b6e5b8d-0191-4dfd-b2b9-79c3639bf02b",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "pbR9gFp6w45IehD0",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Order accepted</title>\n  <style>\n    body { font-family: -apple-system, 'Segoe UI', sans-serif; background:#f7f6f0; margin:0; padding:48px 20px; color:#1c1917; }\n    .card { max-width:460px; margin:0 auto; background:#fff; border-radius:18px; padding:36px 28px; text-align:center; box-shadow:0 12px 32px rgba(0,0,0,0.07); }\n    .icon { width:64px; height:64px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:30px; margin:0 auto 18px; background:#dcfce7; color:#15803d; }\n    h1 { font-size:1.4rem; margin:0 0 10px; }\n    p { color:#57534e; font-size:0.95rem; line-height:1.6; margin:0 0 8px; }\n    .ref { font-size:0.8rem; color:#a8a29e; margin-top:18px; }\n  </style>\n</head>\n<body>\n  <div class=\"card\">\n    <div class=\"icon\">&#10003;</div>\n    <h1>Order accepted</h1>\n    <p>You have marked this order as paid. The buyer has been notified.</p>\n    <p>You can close this page.</p>\n    <div class=\"ref\">Order {{ $('Load Order To Confirm').first().json.order_id || '' }}</div>\n  </div>\n</body>\n</html>",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "64d455b6-fc02-4e46-ae3b-700e2aaa4d26",
+      "name": "Respond Confirmed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        752,
+        928
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "xlink-local-order",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "6d8f1bb3-75aa-4817-b1a1-65915dc0ab75",
+      "name": "Local Order Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        704
+      ],
+      "webhookId": "f6b9d2e7-4a81-4c13-9d56-8e0f2a7b4c19"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = ($input.first().json && $input.first().json.body) || $input.first().json || {};\nconst orderId = 'ORD-' + Date.now().toString(36).toUpperCase() + '-' + Math.floor(Math.random() * 900 + 100);\nconst digits = (v) => String(v === undefined || v === null ? '' : v).replace(/[^0-9]/g, '');\nconst amount = Number(String(body.amount_local === undefined ? '' : body.amount_local).replace(/[^0-9.]/g, '')) || 0;\nconst method = String(body.payment_method || 'CASH_ON_DELIVERY').toUpperCase();\nconst amountUsd = Number(String(body.amount_usd === undefined ? '' : body.amount_usd).replace(/[^0-9.]/g, '')) || 0;\n\n// The merchant alert goes to the SHOP's own number the page sent, never to the buyer. A shopper\n// often leaves the phone field empty, and a WhatsApp send with no recipient used to kill the\n// whole order after it had already been written to the table.\nconst merchantPhone = digits(body.merchant_phone);\nconst buyerPhone = digits(body.buyer_phone);\nconst isMobile = method.indexOf('MOBILE') === 0;\nconst isCash = !isMobile && method !== 'CARD' && method !== 'PAYPAL';\nconst methodLabel = isMobile ? 'Mobile Money' : (isCash ? 'Pay on delivery (cash)' : 'Card / PayPal');\nconst itemsSummary = String(body.items_summary || '').slice(0, 500);\n// The merchant reads ONE line per item, taken from the order the buyer just wrote, so the\n// alert is a receipt rather than a bare amount: what to bring, and how it will be paid.\nconst receiptLines = itemsSummary\n  .split(' | ')\n  .map(function (part) { return String(part || '').trim(); })\n  .filter(function (part) { return part && part.indexOf('Notes:') !== 0; })\n  .map(function (part) { return part.charAt(0) === '-' ? part : '- ' + part; })\n  .join(String.fromCharCode(10));\n\nreturn [{\n  json: {\n    order_id: orderId,\n    slug: String(body.slug || ''),\n    merchant_name: String(body.merchant_name || ''),\n    merchant_phone: merchantPhone,\n    buyer_name: String(body.buyer_name || 'Customer'),\n    buyer_phone: buyerPhone,\n    has_buyer_phone: Boolean(buyerPhone),\n    amount_local: amount,\n    amount_display: 'UGX ' + amount.toLocaleString('en-US'),\n    amount_usd: amountUsd > 0 ? amountUsd.toFixed(2) : '',\n    currency: String(body.currency || 'UGX'),\n    payment_method: method,\n    method_label: methodLabel,\n    is_cash: isCash,\n    receipt_lines: receiptLines,\n    items_summary: itemsSummary\n  }\n}];"
+      },
+      "id": "e9c2c897-79fc-4b65-bf95-f80fac9c4cff",
+      "name": "Prepare Local Order",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        832
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "5vvfNGgL7vW4bNbm"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_id": "={{ $json.order_id }}",
+            "slug": "={{ $json.slug }}",
+            "merchant_name": "={{ $json.merchant_name }}",
+            "buyer_phone": "={{ $json.buyer_phone }}",
+            "buyer_name": "={{ $json.buyer_name }}",
+            "amount_usd": "={{ $json.amount_usd }}",
+            "currency": "={{ $json.currency }}",
+            "amount_local": "={{ $json.amount_local }}",
+            "display_currency": "={{ $json.currency }}",
+            "status": "AWAITING_PAYMENT",
+            "paypal_order_id": "",
+            "items_summary": "={{ $json.items_summary }}",
+            "created_date": "={{ $now.toISO() }}",
+            "paid_date": "",
+            "last_error": "={{ $json.method_label }} - awaiting merchant confirmation"
+          },
+          "schema": [
+            {
+              "id": "order_id",
+              "displayName": "order_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "slug",
+              "displayName": "slug",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "merchant_name",
+              "displayName": "merchant_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "buyer_phone",
+              "displayName": "buyer_phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "buyer_name",
+              "displayName": "buyer_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "amount_usd",
+              "displayName": "amount_usd",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "paypal_order_id",
+              "displayName": "paypal_order_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "items_summary",
+              "displayName": "items_summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_date",
+              "displayName": "created_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "paid_date",
+              "displayName": "paid_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_error",
+              "displayName": "last_error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "18e294b8-58c2-488c-98d9-4e13b01ec722",
+      "name": "Record Local Order",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        512,
+        832
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "1119496204589979",
+        "recipientPhoneNumber": "={{ $('Prepare Local Order').first().json.merchant_phone }}",
+        "textBody": "=New order {{ $('Prepare Local Order').first().json.order_id }} from {{ $('Prepare Local Order').first().json.buyer_name }} for {{ $('Prepare Local Order').first().json.amount_display }} ({{ $('Prepare Local Order').first().json.method_label }}).\n\n{{ $('Prepare Local Order').first().json.receipt_lines }}\n\n{{ $('Prepare Local Order').first().json.is_cash ? 'The buyer is paying CASH ON DELIVERY. Take the goods to them and collect the cash on arrival, then tap to accept and mark them paid:' : 'Check your line for the payment, then tap to confirm:' }}\nhttps://orchid-frigatebird.pikapod.net/webhook/xlink-confirm?token={{ $('Prepare Local Order').first().json.order_id }}",
+        "additionalFields": {}
+      },
+      "id": "29e03290-6287-4b1e-9bf8-82654b5de99a",
+      "name": "Ask Merchant To Confirm",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        736,
+        832
+      ],
+      "webhookId": "d75d45a9-2d03-4ea1-ba16-5c303e7f08fb",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "pbR9gFp6w45IehD0",
+          "name": "WhatsApp account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, order_id: $(\"Prepare Local Order\").first().json.order_id, status: \"AWAITING_PAYMENT\", message: \"Order placed. Awaiting merchant confirmation.\" }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "309e9390-1202-4a31-9900-c5ae2c9411ff",
+      "name": "Respond Local Order",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1184,
+        832
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "1119496204589979",
+        "recipientPhoneNumber": "={{ $('Prepare Local Order').first().json.buyer_phone }}",
+        "textBody": "=Order {{ $('Prepare Local Order').first().json.order_id }} placed. Please complete your payment of {{ $('Prepare Local Order').first().json.amount_display }} to the merchant. Your order is pending until the merchant confirms receipt.",
+        "additionalFields": {}
+      },
+      "id": "f78a283f-753e-42b2-822e-aa1c2a3ade64",
+      "name": "Tell Buyer Pending",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        912
+      ],
+      "webhookId": "492cfe88-fca0-43d3-ad8d-3e1b1b77a778",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "pbR9gFp6w45IehD0",
+          "name": "WhatsApp account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "path": "xlink-pay-cancel",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "e3c5749e-53a3-4e97-8d94-11c608a28592",
+      "name": "PayPal Cancelled",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        480
+      ],
+      "webhookId": "e5a8c1d6-3f79-4a02-8b45-7d9e1f6c3a08"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Payment cancelled</title>\n  <style>\n    body { font-family: -apple-system, 'Segoe UI', sans-serif; background:#f7f6f0; margin:0; padding:48px 20px; color:#1c1917; }\n    .card { max-width:460px; margin:0 auto; background:#fff; border-radius:18px; padding:36px 28px; text-align:center; box-shadow:0 12px 32px rgba(0,0,0,0.07); }\n    .icon { width:64px; height:64px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:30px; margin:0 auto 18px; background:#fef3c7; color:#b45309; }\n    h1 { font-size:1.4rem; margin:0 0 10px; }\n    p { color:#57534e; font-size:0.95rem; line-height:1.6; margin:0 0 8px; }\n  </style>\n</head>\n<body>\n  <div class=\"card\">\n    <div class=\"icon\">!</div>\n    <h1>Payment cancelled</h1>\n    <p>You cancelled before paying, so no money was taken.</p>\n    <p>You can close this page and try again, or choose Cash on Delivery.</p>\n  </div>\n</body>\n</html>",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "eb14c405-2e8b-4b55-b799-dd33bad21832",
+      "name": "Respond Cancelled",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        224,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "events": [
+          "PAYMENT.CAPTURE.COMPLETED",
+          "PAYMENT.CAPTURE.DENIED",
+          "CHECKOUT.ORDER.DECLINED"
+        ]
+      },
+      "id": "30ebf8bc-41a8-461d-a8e7-60da50a7f5c5",
+      "name": "PayPal Event",
+      "type": "n8n-nodes-base.payPalTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        256
+      ],
+      "webhookId": "41c248fc-e85d-43e8-ba2e-6cb95c5cb1e5",
+      "credentials": {
+        "payPalApi": {
+          "id": "y4x3YohabznFCzt1",
+          "name": "PayPal account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = ($input.first().json && $input.first().json.body) || $input.first().json || {};\nconst type = String(body.event_type || '');\nconst resource = body.resource || {};\n\n// The PayPal order id is reachable from each of these events.\nlet paypalOrderId = '';\nif (resource.supplementary_data && resource.supplementary_data.related_ids) {\n  paypalOrderId = String(resource.supplementary_data.related_ids.order_id || '');\n}\nif (!paypalOrderId && resource.id && String(resource.id).indexOf('ORD-') !== 0 && type.indexOf('CHECKOUT.ORDER') === 0) {\n  paypalOrderId = String(resource.id);\n}\nif (!paypalOrderId && resource.custom_id) paypalOrderId = String(resource.custom_id);\n\nconst paid = type === 'PAYMENT.CAPTURE.COMPLETED';\nconst failed = type === 'PAYMENT.CAPTURE.DENIED' || type === 'CHECKOUT.ORDER.DECLINED';\n\nreturn [{\n  json: {\n    event_type: type,\n    paypal_order_id: paypalOrderId,\n    paid: paid,\n    failed: failed,\n    handled: Boolean(paypalOrderId) && (paid || failed)\n  }\n}];"
+      },
+      "id": "36648a73-1a9a-4fc3-a5f7-a349a60d9b14",
+      "name": "Read PayPal Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "5vvfNGgL7vW4bNbm"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "paypal_order_id",
+              "keyValue": "={{ $json.paypal_order_id }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "id": "d6e3ab41-fc8a-4ff7-879b-3a07b3c3f7a9",
+      "name": "Load Order From Event",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        512,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "5vvfNGgL7vW4bNbm"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "paypal_order_id",
+              "keyValue": "={{ $json.paypal_order_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "={{ $json.paid ? \"PAID\" : \"FAILED\" }}",
+            "paid_date": "={{ $json.paid ? $now.toISO() : \"\" }}",
+            "last_error": "={{ $json.paid ? \"\" : $json.event_type }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_id",
+              "displayName": "order_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "slug",
+              "displayName": "slug",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "merchant_name",
+              "displayName": "merchant_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "buyer_phone",
+              "displayName": "buyer_phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "buyer_name",
+              "displayName": "buyer_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "amount_usd",
+              "displayName": "amount_usd",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "paypal_order_id",
+              "displayName": "paypal_order_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "items_summary",
+              "displayName": "items_summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "created_date",
+              "displayName": "created_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "paid_date",
+              "displayName": "paid_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "last_error",
+              "displayName": "last_error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "1879f8cb-a39f-4799-9018-24f527869c2b",
+      "name": "Sync Order Status",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        736,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "databaseToken",
+        "tableId": "1286353",
+        "limit": 1,
+        "additionalOptions": {
+          "filters": {
+            "fields": [
+              {
+                "field": "11875465",
+                "value": "={{ $json.slug }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "cfa7afa9-1333-4f08-bde7-82b03bc56771",
+      "name": "Find Merchant Row",
+      "type": "n8n-nodes-base.baserow",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        384
+      ],
+      "credentials": {
+        "baserowTokenApi": {
+          "id": "gCNrohdhNFB8nXXx",
+          "name": "Baserow Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $('Find Merchant Row').all();\nconst paid = $('read_PayPal_Event').first().json || {};\nconst order = $('load_Order_From_Event').first().json || {};\n\n// Only a captured payment adds revenue.\nif (!paid.paid) {\n  return [];\n}\n\nlet row = null;\nfor (const r of rows) {\n  if (r.json && r.json.id) { row = r.json; break; }\n}\nif (!row) {\n  return [{ json: { skipped: true, reason: 'No Baserow row matched slug ' + String(order.slug || '') } }];\n}\n\n// Any currency: keep a per-currency ledger so different currencies never get mixed.\nlet ledger = {};\ntry {\n  if (row.revenue_ledger) ledger = JSON.parse(String(row.revenue_ledger));\n} catch (e) { ledger = {}; }\n\nconst currency = String(order.currency || 'USD').toUpperCase();\nconst amount = Number(order.amount_usd || 0);\nif (!ledger[currency]) ledger[currency] = 0;\nledger[currency] = Number((ledger[currency] + amount).toFixed(2));\n\n// The merchant's revenue column is one comparable number, so it is kept in USD. An order paid in\n// another currency is converted at the live rate first - a EUR order credited as if its figure\n// were dollars overstates the merchant's takings, and a shilling figure would overstate them a\n// hundredfold. If the rate cannot be fetched the run is left uncounted rather than guessed at.\nlet toUsd = 1;\nif (currency !== 'USD') {\n  toUsd = 0;\n  try {\n    const fx = await this.helpers.httpRequest({ method: 'GET', url: 'https://open.er-api.com/v6/latest/USD', json: true, timeout: 8000 });\n    const rate = fx && fx.rates ? Number(fx.rates[currency]) : 0;\n    if (rate > 0) toUsd = 1 / rate;\n  } catch (e) { toUsd = 0; }\n}\nif (!(toUsd > 0) || !(amount > 0)) {\n  return [{ json: { skipped: true, reason: 'Revenue not credited: no usable USD rate for ' + currency + ' amount ' + amount } }];\n}\nconst amountUsd = Number((amount * toUsd).toFixed(2));\n\n// Keep the plain revenue column meaningful too (insights reads it).\n// Do NOT write revenue_ledger: that column does not exist in Baserow and an unknown\n// field makes the whole PATCH fail, so revenue would never be saved.\nconst primary = Number(row.revenue || 0);\nconst newPrimary = Number((primary + amountUsd).toFixed(2));\n\nreturn [{\n  json: {\n    id: row.id,\n    revenue: newPrimary\n  }\n}];"
+      },
+      "id": "c11c9797-379f-4397-ac58-57b143aae33b",
+      "name": "Add Revenue To Merchant",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "databaseToken",
+        "operation": "update",
+        "tableId": "1286353",
+        "rowId": "={{ $json.id }}",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "11978740",
+              "fieldValue": "={{ $json.revenue }}"
+            }
+          ]
+        }
+      },
+      "id": "a84e737f-ec5c-4c85-bd87-59755aa8d091",
+      "name": "Save Merchant Revenue",
+      "type": "n8n-nodes-base.baserow",
+      "typeVersion": 1.1,
+      "position": [
+        1408,
+        384
+      ],
+      "credentials": {
+        "baserowTokenApi": {
+          "id": "gCNrohdhNFB8nXXx",
+          "name": "Baserow Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "1119496204589979",
+        "recipientPhoneNumber": "={{ $('Load Order From Event').first().json.buyer_phone }}",
+        "textBody": "={{ $('Read PayPal Event').first().json.paid ? \"Payment received. Thank you! Your order \" + $('Load Order From Event').first().json.order_id + \" is confirmed.\" : \"Your payment was declined or cancelled. No money was taken. Order \" + $('Load Order From Event').first().json.order_id + \" was not completed.\" }}",
+        "additionalFields": {}
+      },
+      "id": "751a3810-3c62-4452-b572-885416e8738f",
+      "name": "Notify Buyer Of Status",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        1632,
+        384
+      ],
+      "webhookId": "389c7941-dd52-413d-bf60-18025d241029",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "pbR9gFp6w45IehD0",
+          "name": "WhatsApp account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Checkout Request": {
+      "main": [
+        [
+          {
+            "node": "Prepare Checkout",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Checkout": {
+      "main": [
+        [
+          {
+            "node": "Order Amount Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Order Amount Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get PayPal Token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Checkout Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get PayPal Token": {
+      "main": [
+        [
+          {
+            "node": "Create PayPal Order",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Checkout Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create PayPal Order": {
+      "main": [
+        [
+          {
+            "node": "Record Pending Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Pending Order": {
+      "main": [
+        [
+          {
+            "node": "Build Checkout Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Checkout Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Checkout",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capture Return": {
+      "main": [
+        [
+          {
+            "node": "Load Order For Capture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Order For Capture": {
+      "main": [
+        [
+          {
+            "node": "Get PayPal Token For Capture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get PayPal Token For Capture": {
+      "main": [
+        [
+          {
+            "node": "Capture PayPal Payment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capture PayPal Payment": {
+      "main": [
+        [
+          {
+            "node": "Update Order After Capture",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Order After Capture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Order After Capture": {
+      "main": [
+        [
+          {
+            "node": "Build Payment Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Payment Message": {
+      "main": [
+        [
+          {
+            "node": "Confirm Buyer On WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm Buyer On WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Respond Capture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merchant Confirm": {
+      "main": [
+        [
+          {
+            "node": "Load Order To Confirm",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Order To Confirm": {
+      "main": [
+        [
+          {
+            "node": "Mark Order Paid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Order Paid": {
+      "main": [
+        [
+          {
+            "node": "Tell Buyer Confirmed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tell Buyer Confirmed": {
+      "main": [
+        [
+          {
+            "node": "Respond Confirmed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Local Order Request": {
+      "main": [
+        [
+          {
+            "node": "Prepare Local Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Local Order": {
+      "main": [
+        [
+          {
+            "node": "Record Local Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Local Order": {
+      "main": [
+        [
+          {
+            "node": "Ask Merchant To Confirm",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask Merchant To Confirm": {
+      "main": [
+        [
+          {
+            "node": "Tell Buyer Pending",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Local Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tell Buyer Pending": {
+      "main": [
+        [
+          {
+            "node": "Respond Local Order",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Local Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PayPal Cancelled": {
+      "main": [
+        [
+          {
+            "node": "Respond Cancelled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PayPal Event": {
+      "main": [
+        [
+          {
+            "node": "Read PayPal Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read PayPal Event": {
+      "main": [
+        [
+          {
+            "node": "Load Order From Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Order From Event": {
+      "main": [
+        [
+          {
+            "node": "Sync Order Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Order Status": {
+      "main": [
+        [
+          {
+            "node": "Find Merchant Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Merchant Row": {
+      "main": [
+        [
+          {
+            "node": "Add Revenue To Merchant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Revenue To Merchant": {
+      "main": [
+        [
+          {
+            "node": "Save Merchant Revenue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Merchant Revenue": {
+      "main": [
+        [
+          {
+            "node": "Notify Buyer Of Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "889604a7-a945-439c-ab5f-01541b7a0d2b",
+  "meta": {
+    "instanceId": "98fe485aecbb71ae130ba72781705a2f468fa1ba7cac671dd85f4554ff7c942a"
+  },
+  "nodeGroups": [
+    {
+      "id": "6738d069-e04b-43c2-b083-075a7e90ab96",
+      "name": "Checkout & order creation",
+      "nodeIds": [
+        "6a639367-b4d3-457e-b502-09a182f5bf4a",
+        "0e5f5c1d-6a37-4b2a-9d84-5c71f0b3a2d6",
+        "4751c4c2-47f6-41a3-bf32-21c398d17a09",
+        "41e1e281-c074-4495-8fe6-10a42ddef3be",
+        "8a663713-d8d3-401c-9ddd-111ac575538b",
+        "224e8b20-d5fa-4784-9db2-b67de9e88e06"
+      ],
+      "description": "Validates the cart, creates the PayPal order, and stores it as PENDING with an ORD- id"
+    },
+    {
+      "id": "3ea87c82-a0af-4e0d-a793-d3112af90271",
+      "name": "Capture payment",
+      "nodeIds": [
+        "9a0af307-d75e-416c-b361-be546fa685da",
+        "fd63a598-eb87-4c78-9707-34d062f10da5",
+        "a9f1173a-1c9a-49ba-ba96-724663b03f03",
+        "14530345-ab2b-4dd4-9051-5337c5a8859d",
+        "55098325-fce0-477c-abd5-5e83d8aaa1de",
+        "ca558495-8bda-4a81-b755-025a70a8f360"
+      ],
+      "description": "After the buyer approves on PayPal, moves the funds and marks the order PAID or FAILED"
+    },
+    {
+      "id": "7f39f3f5-09f3-4dd0-bcf2-973daf77a87c",
+      "name": "Payment status sync",
+      "nodeIds": [
+        "36648a73-1a9a-4fc3-a5f7-a349a60d9b14",
+        "d6e3ab41-fc8a-4ff7-879b-3a07b3c3f7a9",
+        "1879f8cb-a39f-4799-9018-24f527869c2b",
+        "cfa7afa9-1333-4f08-bde7-82b03bc56771",
+        "c11c9797-379f-4397-ac58-57b143aae33b",
+        "a84e737f-ec5c-4c85-bd87-59755aa8d091",
+        "751a3810-3c62-4452-b572-885416e8738f"
+      ],
+      "description": "Listens for PayPal events, marks the order paid or failed, adds the amount to the merchant revenue, and messages the buyer"
+    },
+    {
+      "id": "0886926a-8d5c-40e3-a0b8-fd437660b0d0",
+      "name": "Local payment",
+      "nodeIds": [
+        "e9c2c897-79fc-4b65-bf95-f80fac9c4cff",
+        "18e294b8-58c2-488c-98d9-4e13b01ec722",
+        "29e03290-6287-4b1e-9bf8-82654b5de99a",
+        "f78a283f-753e-42b2-822e-aa1c2a3ade64",
+        "309e9390-1202-4a31-9900-c5ae2c9411ff"
+      ],
+      "description": "Records mobile money and cash orders as awaiting payment and asks the merchant to confirm receipt"
+    },
+    {
+      "id": "4c35e6ec-003a-43a1-ab29-a89e978883e5",
+      "name": "Merchant confirmation",
+      "nodeIds": [
+        "c329ec3e-77d1-4d76-a1d3-609d181159c9",
+        "c6cb61cc-0d02-4fb6-a164-3f71e1cf0202",
+        "a86be70b-de2e-41a6-a2ec-b6ba699cdabf"
+      ],
+      "description": "When the merchant taps the link, marks the order paid and tells the buyer"
+    }
+  ],
+  "id": "0aajWSDrtJL4E025",
+  "tags": []
+}

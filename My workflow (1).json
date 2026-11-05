@@ -1,0 +1,400 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "report",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "4a209305-6a8a-4a03-9618-eb061295c250",
+      "name": "Webhook (Report Vendor)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -2880,
+        -1680
+      ],
+      "webhookId": "report-vendor-webhook-id"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Thank you. This vendor has been flagged and suspended pending manual verification by the X-Link safety team.",
+        "options": {}
+      },
+      "id": "2ce99b85-c987-4919-9bea-e3e4a9f04ef4",
+      "name": "Respond to Reporter",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -2656,
+        -1680
+      ]
+    },
+    {
+      "parameters": {
+        "path": "storefront",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "27d88e10-159b-46e6-a946-eb5d3d8443dc",
+      "name": "Web Server Trigger (GET /storefront)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -2880,
+        -2096
+      ],
+      "webhookId": "2bf2e4e1-2550-4d56-b089-6efeb6be8f9b"
+    },
+    {
+      "parameters": {
+        "authentication": "databaseToken",
+        "tableId": 1286353,
+        "additionalOptions": {
+          "search": "={{ $('Web Server Trigger (GET /storefront)').first().json.query.slug }}"
+        }
+      },
+      "id": "06ac7030-4f5f-4987-90be-e39b3c8b3233",
+      "name": "Get many rows",
+      "type": "n8n-nodes-base.baserow",
+      "typeVersion": 1.1,
+      "position": [
+        -2656,
+        -2096
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "baserowTokenApi": {
+          "id": "gCNrohdhNFB8nXXx",
+          "name": "Baserow Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let rawSlug = '';\ntry {\n  const hookData = $('Web Server Trigger (GET /storefront)').first().json;\n  rawSlug = String(hookData.query?.slug || '').toLowerCase().trim();\n} catch (e) {\n  rawSlug = String($input.item.json?.query?.slug || '').toLowerCase().trim();\n}\n\nconst slug = rawSlug.replace(/\\/+$/, '').trim();\nconst allItems = $input.all();\nlet html = null;\nconst matches = [];\n\nfor (const item of allItems) {\n  const row = item.json || {};\n  const rowSlug = String(row.slug || '').toLowerCase().trim().replace(/\\/+$/, '');\n  if (!rowSlug) continue;\n  if (row.html_content || row.html) {\n    if (rowSlug === slug) matches.push(row.html_content || row.html);\n  }\n}\n\n// A shop whose address is corrected to its real business name keeps serving its old address too,\n// so a link already sent to customers still opens the shop instead of a 404. The store row records\n// the address it moved from in previous_slug.\nif (matches.length === 0 && slug) {\n  for (const item of allItems) {\n    const row = item.json || {};\n    const movedFrom = String(row.previous_slug || '').toLowerCase().trim().replace(/\\/+$/, '');\n    const rowSlug = String(row.slug || '').toLowerCase().trim().replace(/\\/+$/, '');\n    if (!rowSlug || !(row.html_content || row.html)) continue;\n    if (movedFrom && movedFrom === slug) { html = row.html_content || row.html; break; }\n    // Baserow may hold several retired addresses in a comma-separated list.\n    if (movedFrom && movedFrom.split(',').map(v => v.trim()).indexOf(slug) >= 0) { html = row.html_content || row.html; break; }\n  }\n}\n\nif (matches.length > 0) {\n  html = matches[matches.length - 1];\n} else if (!html) {\n  for (const item of allItems) {\n    const row = item.json || {};\n    const rowSlug = String(row.slug || '').toLowerCase().trim().replace(/\\/+$/, '');\n    if (!rowSlug) continue;\n    if ((row.html_content || row.html) && (rowSlug.includes(slug) || slug.includes(rowSlug))) {\n      html = row.html_content || row.html; break;\n    }\n  }\n}\n\nif (!html && slug && globalThis.xLinkStores) {\n  html = globalThis.xLinkStores[slug] || globalThis.xLinkStores[slug + '/'] || null;\n  if (!html) {\n    const keys = Object.keys(globalThis.xLinkStores);\n    const matchedKey = keys.find(k => k.replace(/\\/+$/, '') === slug);\n    if (matchedKey) html = globalThis.xLinkStores[matchedKey];\n  }\n}\n\nif (!html && slug) {\n  try {\n    const staticData = $getWorkflowStaticData('global');\n    if (staticData.stores) {\n      html = staticData.stores[slug] || staticData.stores[slug + '/'] || null;\n      if (!html) {\n        const keys = Object.keys(staticData.stores);\n        const matchedKey = keys.find(k => k.replace(/\\/+$/, '') === slug);\n        if (matchedKey) html = staticData.stores[matchedKey];\n      }\n    }\n  } catch (e) {}\n}\n\nif (html) return [{ json: { html: html, status: 200 } }];\n\nconst fallbackHtml = `<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"UTF-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>Portal Initializing</title>\n  <style>\n    body { font-family: sans-serif; background: #07090e; color: #fff; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; }\n    .box { background: #0f1422; padding: 2.5rem; border-radius: 14px; max-width: 440px; border: 1px solid #1e2640; }\n    h1 { color: #3b82f6; font-size: 1.4rem; margin-bottom: 0.5rem; }\n    p { color: #94a3b8; font-size: 0.95rem; }\n  </style>\n</head>\n<body>\n  <div class=\"box\">\n    <h1>Portal Initializing</h1>\n    <p>We could not find an active storefront matching <code>${escape(slug)}</code>. Please regenerate your site via WhatsApp.</p>\n  </div>\n</body>\n</html>`;\n\nreturn [{ json: { html: fallbackHtml, status: 404 } }];"
+      },
+      "id": "e6755ef8-a1b7-42d7-b94f-28fd5a9a5523",
+      "name": "Lookup Storefront by Slug",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2400,
+        -2096
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": "={{ $json.status || 200 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "23eb12ac-12bb-4661-84b0-1783acfb8a23",
+      "name": "Render HTML Web Page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -2160,
+        -2096
+      ]
+    },
+    {
+      "parameters": {
+        "path": "map",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "27d6b86b-480c-42b4-8ce2-36e54f39550c",
+      "name": "Web Server Trigger (GET /map)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -2880,
+        -1904
+      ],
+      "webhookId": "map-discovery-trigger-id"
+    },
+    {
+      "parameters": {
+        "authentication": "databaseToken",
+        "tableId": 1286353,
+        "additionalOptions": {}
+      },
+      "id": "eaf7f306-c985-4aac-9fea-4b94a9274def",
+      "name": "Get all rows",
+      "type": "n8n-nodes-base.baserow",
+      "typeVersion": 1.1,
+      "position": [
+        -2656,
+        -1904
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "baserowTokenApi": {
+          "id": "gCNrohdhNFB8nXXx",
+          "name": "Baserow Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst validItems = items.filter(item => {\n  const d = item.json || {};\n  const lat = parseFloat(d.latitude || d.lat || d.field_lat || d.field_latitude);\n  const lng = parseFloat(d.longitude || d.lng || d.field_lng || d.field_longitude);\n  return !isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0;\n});\n\nconst dedupeMap = new Map();\nvalidItems.forEach(item => {\n  const d = item.json || {};\n  const slug = d.slug || d.field_slug || '';\n  if (slug) dedupeMap.set(slug, d);\n});\n\nconst merchants = Array.from(dedupeMap.values()).map(row => {\n  const lat = parseFloat(row.latitude || row.lat || row.field_lat || row.field_latitude);\n  const lng = parseFloat(row.longitude || row.lng || row.field_lng || row.field_longitude);\n  const name = row.merchant_name || row.name || row.field_merchant_name || 'Official Storefront';\n  const category = row.business_category || row.category || row.field_business_category || 'Commercial Trade';\n  const headline = row.hero_headline || row.tagline || row.field_hero_headline || 'Direct WhatsApp Merchant';\n  const location = row.location || row.field_location || 'Kampala, Uganda';\n  const slug = row.slug || row.field_slug || '';\n  const phone = String(row.senderPhone || row.phone || row.field_phone || '').replace(/[^0-9]/g, '');\n  const tier = row.site_tier || row.field_site_tier || 'MICRO';\n  const storeUrl = row.live_store_url || row.field_live_store_url || `https://orchid-frigatebird.pikapod.net/webhook/storefront?slug=${slug}`;\n\n  return { name, category, headline, location, lat, lng, slug, storeUrl, phone, tier };\n});\n\nconst mapHtml = `<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"UTF-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\" />\n  <title>X-Link | Local Discovery Map</title>\n  <link rel=\"stylesheet\" href=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.css\" />\n  <script src=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\"></script>\n  <link href=\"https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap\" rel=\"stylesheet\">\n  <style>\n    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }\n    body, html { width: 100%; height: 100%; overflow: hidden; background: #07090e; color: #f8fafc; }\n    #map { width: 100vw; height: 100vh; z-index: 1; position: absolute; inset: 0; }\n    \n    /* Optimized Tile Filter for Crystal-Clear Readability */\n    /* Normal, readable map tiles. The old dark inversion made roads and labels unreadable. */\n    .leaflet-tile-pane { filter: saturate(1.05) brightness(1.02); }\n    \n    .map-controls { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); width: 92%; max-width: 650px; z-index: 1000; background: rgba(15, 23, 42, 0.92); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 20px; padding: 14px 18px; box-shadow: 0 16px 40px rgba(0,0,0,0.65); display: flex; flex-direction: column; gap: 12px; }\n    .map-brand { display: flex; justify-content: space-between; align-items: center; }\n    .map-brand h1 { font-size: 1.1rem; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 8px; letter-spacing: -0.02em; }\n    .map-brand span { font-size: 0.72rem; background: #25d366; color: #0f172a; font-weight: 800; padding: 3px 10px; border-radius: 999px; }\n    .search-input { width: 100%; background: #07090e; border: 1px solid rgba(255, 255, 255, 0.28); border-radius: 12px; padding: 12px 16px; color: #fff; font-size: 1rem; outline: none; transition: border-color 0.2s; }\n    .search-input:focus { border-color: #38bdf8; }\n    \n    .category-pills { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }\n    .category-pills::-webkit-scrollbar { display: none; }\n    .pill { background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.24); color: #e2e8f0; font-size: 0.88rem; font-weight: 700; padding: 8px 16px; border-radius: 999px; cursor: pointer; white-space: nowrap; transition: all 0.2s; }\n    .pill:hover, .pill.active { background: #38bdf8; color: #0f172a; font-weight: 700; border-color: #38bdf8; }\n    \n    /* THE CARD HAS TO FIT ON THE SCREEN.\n       The popup used to open near the top of the map and slide under the search / category bar, so\n       the shop name and its buttons were cut off and the card could not be read or tapped at all.\n       It is now a bounded, scrollable card: it never grows past the space between the control bar\n       and the bottom of the screen, and its own contents scroll instead of being clipped. */\n    .leaflet-popup { max-width: min(94vw, 360px); }\n    .leaflet-popup-content-wrapper { background: #0f172a !important; color: #f8fafc !important; border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 18px !important; padding: 6px !important; box-shadow: 0 16px 40px rgba(0,0,0,0.8) !important; }\n    .leaflet-popup-content { margin: 0 !important; max-height: 62vh; max-height: 62svh; overflow-y: auto; -webkit-overflow-scrolling: touch; }\n    .leaflet-popup-tip { background: #0f172a !important; }\n    /* Shop card. Rebuilt for legibility: the category line was tiny, letter-spaced and dark blue\n       on dark, the description was 0.85rem mid-grey, and every button was under the 44px touch\n       minimum. On a phone in daylight the whole card read as a blur. */\n    .pop-card { padding: 14px 14px 12px; min-width: 288px; }\n    .pop-tag { font-size: 0.86rem; font-weight: 800; text-transform: uppercase; color: #bae6fd; letter-spacing: 0.03em; line-height: 1.5; margin-bottom: 10px; }\n    .pop-title { font-size: 1.5rem; font-weight: 800; color: #ffffff; line-height: 1.15; margin-bottom: 8px; letter-spacing: -0.02em; }\n    .pop-sub { font-size: 1rem; font-weight: 600; color: #f1f5f9; line-height: 1.6; margin-bottom: 16px; }\n    /* Section headings were #cbd5e1 grey and disappeared into the dark card. Now white-leaning\n       blue at a higher weight, with a hairline underline so each block is clearly separated. */\n    .pop-section-label { font-size: 0.82rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: #e8f4ff; margin: 16px 0 8px; padding-bottom: 5px; border-bottom: 1px solid rgba(255,255,255,0.18); }\n    .pop-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 4px; }\n    .pop-btn { text-align: center; padding: 13px 12px; min-height: 48px; display: inline-flex; align-items: center; justify-content: center; border-radius: 11px; font-size: 0.98rem; font-weight: 800; line-height: 1.3; text-decoration: none; transition: transform 0.2s; }\n    /* One-tap buttons stack full width instead of squeezing two long labels into a half-column. */\n    @media (max-width: 420px) { .pop-card { min-width: 250px; } .pop-actions { grid-template-columns: 1fr; } }\n    .pop-btn:hover { transform: scale(1.02); }\n    .pop-btn-store { background: #38bdf8; color: #0f172a; }\n    .pop-btn-wa { background: #25d366; color: #ffffff; }\n    .pop-btn-nav { grid-column: span 2; background: #2563eb; color: #ffffff; padding: 12px 14px; border-radius: 10px; font-size: 0.95rem; font-weight: 800; text-decoration: none; display: block; text-align: center; min-height: 48px; line-height: 1.5; }\n    .pop-btn-distance { background: #1f9d8b; }\n    /* LABEL COLOURS HAVE TO WIN AGAINST LEAFLET'S OWN LINK RULE.\n       Leaflet ships its own stylesheet rule for any link inside the map container, colour #0078a8,\n       which is more specific than a single class selector like pop-btn-nav. So every button in the\n       card kept Leaflet's mid-blue label instead of the colour set here: \"Start navigation\" was\n       mid-blue on a mid-blue button, \"Storefront\" was pale blue on a pale blue button, and on a\n       phone in daylight the card was unreadable. These two-class rules outrank Leaflet's, so each\n       label now has the colour it was designed for. The \"coming soon\" buttons set their colours\n       inline, so they were never affected. */\n    .leaflet-container .pop-btn, .leaflet-popup .pop-btn { color: #ffffff; }\n    .leaflet-container .pop-btn-store, .leaflet-popup .pop-btn-store { color: #0f172a; }\n    .leaflet-container .pop-btn-wa, .leaflet-popup .pop-btn-wa { color: #ffffff; }\n    .leaflet-container .pop-btn-nav, .leaflet-popup .pop-btn-nav { color: #ffffff; }\n    .leaflet-container .pop-btn-distance, .leaflet-popup .pop-btn-distance { color: #ffffff; }\n    .leaflet-container .pop-btn:hover, .leaflet-popup .pop-btn:hover { text-decoration: none; }\n    /* The two \"not live yet\" buttons read as clearly secondary: they keep their colour but the\n       label carries a small dot so nobody mistakes them for a working booking button. */\n    .pop-btn-soon::after { content: ' ·'; opacity: 0.7; }\n    .pop-distance { grid-column: span 2; background: rgba(56,189,248,0.16); border: 1px solid rgba(56,189,248,0.55); color: #f0f9ff; border-radius: 10px; padding: 11px 13px; font-size: 0.9rem; font-weight: 700; line-height: 1.5; }\n    /* If no shop has a verified map point, say so on the map itself instead of showing a blank\n       map that looks broken. */\n    .xl-empty { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000; background: rgba(15,23,42,0.96); border: 1px solid rgba(56,189,248,0.55); color: #f8fafc; padding: 20px 24px; border-radius: 16px; max-width: 88vw; text-align: center; font-size: 1rem; font-weight: 600; line-height: 1.55; box-shadow: 0 16px 40px rgba(0,0,0,0.6); }\n    .xl-empty b { color: #38bdf8; }\n\n    .xl-near-btn { position: absolute; left: 50%; transform: translateX(-50%); bottom: 74px; z-index: 1000; background: #1d4ed8; color: #ffffff; border: 2px solid #ffffff; border-radius: 999px; padding: 12px 22px; font-size: 0.9rem; font-weight: 800; box-shadow: 0 12px 30px rgba(0,0,0,0.55); cursor: pointer; }\n    .xl-near-btn:hover { background: #1e40af; }\n\n    /* Shop pins. These classes had NO styling at all, so every marker was a zero-size invisible\n       div - the map showed tiles but no shops, which is why the map looked \"gone\". */\n    .xl-pin { position: relative; display: flex; flex-direction: column; align-items: center; }\n    /* BLINKING BEACONS. A shop on the map is a live thing, so its pin breathes: a soft halo expands\n       and fades behind the dot the way a beacon does, and the dot itself swells slightly. Two\n       animations on two elements, so the halo never moves the dot out of place. */\n    .xl-pin-dot { position: relative; width: 18px; height: 18px; border-radius: 50%; border: 3px solid #ffffff; box-shadow: 0 0 0 2px rgba(15,23,42,0.45), 0 6px 14px rgba(0,0,0,0.55); animation: xl-pin-beat 2.2s ease-in-out infinite; }\n    .xl-pin-dot::after { content: ''; position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; background: currentColor; opacity: 0.45; animation: xl-pin-halo 2.2s ease-out infinite; }\n    @keyframes xl-pin-beat { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.14); } }\n    @keyframes xl-pin-halo { 0% { transform: scale(1); opacity: 0.5; } 70% { transform: scale(3.1); opacity: 0; } 100% { transform: scale(3.1); opacity: 0; } }\n    @media (prefers-reduced-motion: reduce) { .xl-pin-dot, .xl-pin-dot::after { animation: none; } }\n    .xl-pin-label { margin-top: 4px; max-width: 170px; padding: 4px 10px; border-radius: 999px; background: rgba(15,23,42,0.95); color: #ffffff; font-size: 0.78rem; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 1px solid rgba(255,255,255,0.35); }\n\n    /* Distance panel - also had no styling, so its text sat unstyled over the map. */\n    .xl-me-panel { position: absolute; left: 50%; transform: translateX(-50%); bottom: 130px; z-index: 1000; background: rgba(15,23,42,0.96); color: #f8fafc; border: 1px solid rgba(56,189,248,0.55); border-radius: 14px; padding: 11px 18px; font-size: 0.92rem; font-weight: 700; max-width: 92%; text-align: center; box-shadow: 0 12px 30px rgba(0,0,0,0.55); }\n    .xl-me-panel b { color: #38bdf8; }\n\n    /* The \"still in development\" message. Sits above the map controls, readable on any tile,\n       and disappears on its own so it never blocks the map. */\n    .xl-toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 28px; z-index: 99999; display: none; max-width: 88vw; background: rgba(15,23,42,0.98); color: #f8fafc; border: 1px solid rgba(56,189,248,0.65); border-radius: 14px; padding: 15px 22px; font-size: 0.95rem; font-weight: 600; line-height: 1.5; text-align: center; box-shadow: 0 16px 40px rgba(0,0,0,0.7); }\n    .xl-toast b { color: #38bdf8; }\n\n    /* GPS User Marker Glow */\n    .user-gps-pin { width: 22px; height: 22px; background: #38bdf8; border: 3px solid #ffffff; border-radius: 50%; box-shadow: 0 0 20px #38bdf8; animation: pulse-gps 2s infinite; }\n    @keyframes pulse-gps { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 14px rgba(56, 189, 248, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); } }\n  </style>\n</head>\n<body>\n  <div class=\"map-controls\">\n    <div class=\"map-brand\">\n      <h1>🌐 X-Link Discovery</h1>\n      <span>LIVE</span>\n    </div>\n    <input type=\"text\" id=\"searchInput\" class=\"search-input\" placeholder=\"Search a shop, product or place...\" oninput=\"renderMarkers()\" />\n    <div class=\"category-pills\">\n      <button class=\"pill active\" onclick=\"setCategory('ALL', this)\">All</button>\n      <button class=\"pill\" onclick=\"setCategory('TECH', this)\">Tech &amp; Electronics</button>\n      <button class=\"pill\" onclick=\"setCategory('FASHION', this)\">Fashion &amp; Apparel</button>\n      <button class=\"pill\" onclick=\"setCategory('FOOD', this)\">Food &amp; Cafe</button>\n    </div>\n  </div>\n\n  <div id=\"map\"></div>\n  <div class=\"xl-empty\" id=\"mapEmpty\" style=\"display:none;\"><b>No shops pinned here yet.</b><br />A shop shows up on the X-Link map once its location has been confirmed. Ask the merchant to share their location pin on WhatsApp.</div>\n  <div class=\"xl-me-panel\" id=\"myDistancePanel\">Location off &mdash; tap <b>Find shops near me</b> to measure distances.</div>\n  <button type=\"button\" class=\"xl-near-btn\" id=\"nearMeBtn\" onclick=\"nearestToMe()\">&#128205; Find shops near me</button>\n\n  <script>\n    const merchants = ${JSON.stringify(merchants)};\n    \n    // Initialize map centered on Kampala by default\n    const map = L.map('map', { zoomControl: false }).setView([0.3136, 32.5811], 13);\n    \n    L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {\n      maxZoom: 20,\n      noWrap: true,\n      attribution: '&copy; Google Maps'\n    }).addTo(map);\n    \n    L.control.zoom({ position: 'bottomright' }).addTo(map);\n\n    // Fix multi-world tile glitch on render\n    setTimeout(() => { map.invalidateSize(); }, 200);\n\n    // Track User GPS Location\n    let userMarker = null;\n    if (navigator.geolocation) {\n      navigator.geolocation.watchPosition(position => {\n        const userLat = position.coords.latitude;\n        const userLng = position.coords.longitude;\n        \n        const userIcon = L.divIcon({\n          className: 'custom-user-pin',\n          html: '<div class=\"user-gps-pin\"></div>',\n          iconSize: [24, 24],\n          iconAnchor: [12, 12]\n        });\n\n        userPos = { lat: userLat, lng: userLng };\n        if (userMarker) {\n          userMarker.setLatLng([userLat, userLng]);\n        } else {\n          userMarker = L.marker([userLat, userLng], { icon: userIcon }).addTo(map).bindPopup(\"<b>Your Current GPS Location</b>\");\n        }\n      }, err => console.log(\"GPS Location permission denied or unavailable\"), { enableHighAccuracy: true });\n    }\n\n    const urlParams = new URLSearchParams(window.location.search);\n    const focusLat = urlParams.get('lat') !== null && urlParams.get('lat') !== '' ? parseFloat(urlParams.get('lat')) : null;\n    const focusLng = urlParams.get('lng') !== null && urlParams.get('lng') !== '' ? parseFloat(urlParams.get('lng')) : null;\n    let urlSearchQuery = (urlParams.get('search') || '').replace(/[\\\\\\\\\\\\\\\\/\\\\\\\\\\\\\\\\#?&]+$/, '').trim().toLowerCase();\n    if (urlSearchQuery) document.getElementById('searchInput').value = urlSearchQuery;\n\n    let activeCategory = 'ALL';\n    let markerStore = [];\n    let initialLoad = true;\n\n    // Saturated, deep pin colours with a white outline read clearly on every map shade.\n    function getCategoryColor(cat) {\n      const c = (cat || '').toLowerCase();\n      if (c.match(/tech|electronics|gadget|hardware|computer|phone/)) return '#0284c7';\n      if (c.match(/fashion|apparel|wear|clothing|beauty|salon|boutique/)) return '#be185d';\n      if (c.match(/food|restaurant|rolex|cafe|bakery|drink/)) return '#c2410c';\n      return '#15803d';\n    }\n\n    function escapePinText(v) {\n      return String(v || '').replace(/[&<>\"]/g, function (ch) {\n        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[ch];\n      });\n    }\n\n    function createCustomIcon(color, label) {\n      const safeLabel = escapePinText(label);\n      // The colour is set on the dot AND on the pin wrapper: the pulsing halo is painted from\n      // currentColor, so each shop's beacon blinks in that shop's own category colour.\n      return L.divIcon({\n        className: 'custom-pin',\n        html: '<div class=\"xl-pin\" style=\"color:' + color + ';\"><div class=\"xl-pin-dot\" style=\"background-color:' + color + ';color:' + color + ';\"></div>' +\n              (safeLabel ? ('<div class=\"xl-pin-label\">' + safeLabel + '</div>') : '') + '</div>',\n        iconSize: [30, 34],\n        iconAnchor: [15, 18],\n        popupAnchor: [0, -18]\n      });\n    }\n\n    // Straight-line distance between two points, in kilometres.\n    function haversineKm(a, b) {\n      if (!a || !b) return null;\n      const R = 6371;\n      const dLat = (b.lat - a.lat) * Math.PI / 180;\n      const dLng = (b.lng - a.lng) * Math.PI / 180;\n      const s = Math.sin(dLat / 2) * Math.sin(dLat / 2) +\n        Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) *\n        Math.sin(dLng / 2) * Math.sin(dLng / 2);\n      return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));\n    }\n\n    function kmText(km) {\n      if (km === null || !isFinite(km)) return '';\n      return km < 1 ? (Math.round(km * 1000) + ' m') : (km.toFixed(km < 10 ? 1 : 0) + ' km');\n    }\n\n    // Road distance, measured inside this map. If the routing service cannot be reached the\n    // straight-line figure is shown and labelled as a straight line - never dressed up as a\n    // road distance.\n    function roadKm(from, to, done) {\n      const straight = haversineKm(from, to);\n      let settled = false;\n      function finish(km, road) {\n        if (settled) return;\n        settled = true;\n        done(km, road);\n      }\n      try {\n        const url = 'https://router.project-osrm.org/route/v1/driving/' +\n          from.lng + ',' + from.lat + ';' + to.lng + ',' + to.lat + '?overview=false';\n        fetch(url).then(function (r) { return r.json(); }).then(function (data) {\n          if (data && Array.isArray(data.routes) && data.routes[0] && data.routes[0].distance) {\n            finish(data.routes[0].distance / 1000, true);\n          } else {\n            finish(straight, false);\n          }\n        }).catch(function () { finish(straight, false); });\n      } catch (e) {\n        finish(straight, false);\n      }\n      setTimeout(function () { finish(straight, false); }, 6000);\n    }\n\n    // The last known position of the buyer, once the browser has allowed GPS.\n    let userPos = null;\n\n    // ── Features that are not switched on yet ────────────────────────────────────\n    // SafeBoda rides and Mobile Money payments are not wired up on this platform yet. The map\n    // shows the buttons so the shop reads as complete and the intent is visible, and tapping one\n    // says plainly that it is still in development. It never opens a dead link, never pretends to\n    // book a ride, and never takes money.\n    function comingSoon(ev, el) {\n      if (ev) ev.preventDefault();\n      // The feature name comes from the button's data attribute, so nothing has to be quoted\n      // inside the generated markup.\n      var what = (el && el.getAttribute) ? (el.getAttribute('data-soon') || 'This feature') : 'This feature';\n      var toast = document.getElementById('xlToast');\n      if (!toast) {\n        toast = document.createElement('div');\n        toast.id = 'xlToast';\n        toast.className = 'xl-toast';\n        document.body.appendChild(toast);\n      }\n      toast.innerHTML = '<b>' + String(what || 'This feature') + '</b> is still in development. It will be available here soon.';\n      toast.style.display = 'block';\n      if (window.__xlToastTimer) clearTimeout(window.__xlToastTimer);\n      window.__xlToastTimer = setTimeout(function () { toast.style.display = 'none'; }, 6000);\n    }\n\n    function startNav(ev, lat, lng) {\n      if (ev) ev.preventDefault();\n      // Turn-by-turn opens from the map the buyer is already on, so the pin they were looking\n      // at is the destination rather than a search for the shop's name.\n      const dest = lat + ',' + lng;\n      const url = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(dest) + '&travelmode=driving';\n      window.open(url, '_blank');\n    }\n\n    function distanceLabel(el, km, road, fromGps) {\n      if (!el) return;\n      if (km === null || !isFinite(km)) {\n        el.innerHTML = 'Turn on location to see how far this is from you.';\n        return;\n      }\n      el.innerHTML = (fromGps ? 'About <b>' : '<b>') + kmText(km) + '</b> from you' +\n        (road ? ' by road' : (fromGps ? ' in a straight line' : ' in a straight line')) +\n        (fromGps ? '' : ' (approximate - city centre)');\n    }\n\n    function showDistance(ev, lat, lng, btn) {\n      if (ev) ev.preventDefault();\n      const card = btn ? btn.closest('.pop-card') : null;\n      const box = card ? card.querySelector('#popDistance') : document.getElementById('popDistance');\n      const dest = { lat: Number(lat), lng: Number(lng) };\n      const origin = userPos;\n      if (!origin) {\n        // No GPS yet: ask for it rather than guessing where the buyer is.\n        if (box) box.innerHTML = 'Waiting for your location...';\n        if (navigator.geolocation) {\n          navigator.geolocation.getCurrentPosition(function (pos) {\n            userPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };\n            roadKm(userPos, dest, function (km, road) { distanceLabel(box, km, road, true); });\n          }, function () {\n            if (box) box.innerHTML = 'Location is off. Turn it on to see the distance from where you are.';\n          }, { enableHighAccuracy: true, timeout: 12000 });\n        } else if (box) {\n          box.innerHTML = 'This device cannot share its location.';\n        }\n        return;\n      }\n      if (box) box.innerHTML = 'Measuring the distance...';\n      roadKm(origin, dest, function (km, road) { distanceLabel(box, km, road, true); });\n    }\n\n    function renderMarkers() {\n      markerStore.forEach(m => map.removeLayer(m.layer));\n      markerStore = [];\n\n      const query = document.getElementById('searchInput').value.toLowerCase().trim();\n\n      merchants.forEach(m => {\n        const catLower = (m.category || '').toLowerCase();\n        const catMatch = activeCategory === 'ALL' || \n          (activeCategory === 'TECH' && catLower.match(/tech|electronics|gadget|hardware|computer|phone/)) ||\n          (activeCategory === 'FASHION' && catLower.match(/fashion|apparel|wear|clothing|beauty|salon|boutique/)) ||\n          (activeCategory === 'FOOD' && catLower.match(/food|restaurant|rolex|cafe|bakery/));\n\n        const textMatch = !query || \n          m.name.toLowerCase().includes(query) || \n          m.headline.toLowerCase().includes(query) || \n          m.location.toLowerCase().includes(query) ||\n          m.category.toLowerCase().includes(query);\n\n        if (catMatch && textMatch) {\n          const color = getCategoryColor(m.category);\n          const safeName = escapePinText(m.name);\n          const safeCat = escapePinText(m.category);\n          const safeLoc = escapePinText(m.location);\n          const safeSub = escapePinText(m.headline);\n          const safeUrl = escapePinText(m.storeUrl);\n          // THE MENU IS GROUPED SO IT CAN BE READ.\n          // It was one undifferentiated stack of coloured bars, and the card could not be seen on a\n          // phone at all (cut off under the search bar). Now it reads in three labelled blocks:\n          // the shop's own links, getting to it, and the two features that are not live yet.\n          const popupContent =\n            '<div class=\"pop-card\" data-lat=\"' + m.lat + '\" data-lng=\"' + m.lng + '\">' +\n              '<div class=\"pop-tag\">' + safeCat + ' &bull; ' + safeLoc + '</div>' +\n              '<div class=\"pop-title\">' + safeName + '</div>' +\n              (safeSub ? '<div class=\"pop-sub\">' + safeSub + '</div>' : '') +\n              '<div class=\"pop-section-label\">Visit the shop</div>' +\n              '<div class=\"pop-actions\">' +\n                '<a href=\"' + safeUrl + '\" target=\"_blank\" class=\"pop-btn pop-btn-store\">Storefront &nearr;</a>' +\n                (m.phone ? ('<a href=\"https://wa.me/' + escapePinText(m.phone) + '\" target=\"_blank\" class=\"pop-btn pop-btn-wa\">WhatsApp &nearr;</a>') : '') +\n              '</div>' +\n              '<div class=\"pop-section-label\">Getting there</div>' +\n              '<div class=\"pop-actions\">' +\n                '<a href=\"#\" class=\"pop-btn pop-btn-nav\" onclick=\"startNav(event, ' + m.lat + ', ' + m.lng + ')\">&#129517; Start navigation</a>' +\n                '<a href=\"#\" class=\"pop-btn pop-btn-nav pop-btn-distance\" onclick=\"showDistance(event, ' + m.lat + ', ' + m.lng + ', this)\">&#128207; Show distance</a>' +\n                '<div class=\"pop-distance\" id=\"popDistance\">Tap \"Show distance\" to see how far this is from you.</div>' +\n              '</div>' +\n              // ── Ride-hailing and mobile money ────────────────────────────────────\n              // SafeBoda is Uganda's boda-boda ride-hailing app, so a buyer looking at a shop wants\n              // to book the ride from right here. This platform has no SafeBoda integration, so\n              // the button is shown, looks like the others, and says plainly that it is still in\n              // development - it never opens a dead link and never pretends to book anything.\n              // The label travels in a data attribute: a quote inside this single-quoted JS string\n              // would terminate it and break the whole page script.\n              '<div class=\"pop-section-label\">Coming soon</div>' +\n              '<div class=\"pop-actions\">' +\n                '<a href=\"#\" class=\"pop-btn pop-btn-soon\" style=\"background:#f59e0b;color:#0f172a;\" data-soon=\"SafeBoda ride\" onclick=\"comingSoon(event, this)\">&#128757; Ride with SafeBoda</a>' +\n                '<a href=\"#\" class=\"pop-btn pop-btn-soon\" style=\"background:#7c3aed;color:#ffffff;\" data-soon=\"Mobile Money payment\" onclick=\"comingSoon(event, this)\">&#128241; Pay with Mobile Money</a>' +\n              '</div>' +\n            '</div>';\n\n          const marker = L.marker([m.lat, m.lng], { icon: createCustomIcon(color, m.name) }).addTo(map).bindPopup(popupContent);\n          markerStore.push({ data: m, layer: marker });\n        }\n      });\n\n      // Nothing to show: explain it, never leave a silent empty map. A shop appears here once the\n      // merchant's location has been confirmed, so a missing pin is a setup gap, not a broken map.\n      var emptyBox = document.getElementById('mapEmpty');\n      if (emptyBox) emptyBox.style.display = markerStore.length ? 'none' : 'block';\n\n      if (initialLoad && markerStore.length > 0 && (urlSearchQuery || focusLat !== null)) {\n        // Open the card where it can actually be seen: the map pans so the pin sits low on the\n        // screen, leaving the upper half for the popup instead of pushing it under the control bar.\n        const panForPopup = (layer) => {\n          try {\n            map.panInside(layer.getLatLng(), { paddingTopLeft: [10, 110], paddingBottomRight: [10, 40] });\n          } catch (e) {}\n        };\n        let targetMarker = null;\n        if (focusLat !== null && focusLng !== null) {\n          // Opened from a shop's page with its exact point: centre on that shop, not on a name\n          // that other businesses may share.\n          let best = null;\n          markerStore.forEach(function (entry) {\n            const d = haversineKm({ lat: focusLat, lng: focusLng }, { lat: entry.data.lat, lng: entry.data.lng });\n            if (d !== null && (best === null || d < best)) { best = d; targetMarker = entry.layer; }\n          });\n        }\n        if (!targetMarker) targetMarker = markerStore[0].layer;\n        map.flyTo(targetMarker.getLatLng(), 16, { animate: true, duration: 1.5 });\n        setTimeout(() => { targetMarker.openPopup(); panForPopup(targetMarker); }, 1500);\n        initialLoad = false;\n      }\n    }\n\n    function setCategory(cat, el) {\n      document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));\n      el.classList.add('active');\n      activeCategory = cat;\n      renderMarkers();\n    }\n\n    function nearestToMe() {\n      const btn = document.getElementById('nearMeBtn');\n      const panel = document.getElementById('myDistancePanel');\n      function show() {\n        panel.style.display = 'block';\n        const rows = [];\n        const origin = userPos;\n        let pending = markerStore.length;\n        if (!pending) { panel.innerHTML = 'No shops are shown right now.'; return; }\n        markerStore.forEach(function (entry) {\n          const m = entry.data;\n          roadKm(origin, { lat: m.lat, lng: m.lng }, function (km, road) {\n            rows.push({ m: m, km: km, road: road });\n            pending--;\n            if (pending > 0) return;\n            rows.sort(function (x, y) {\n              const a = x.km === null ? Infinity : x.km;\n              const b = y.km === null ? Infinity : y.km;\n              return a - b;\n            });\n            let html = '<div style=\"font-weight:800;margin-bottom:6px;\">Closest to you</div>';\n            rows.slice(0, 4).forEach(function (r) {\n              html += '<div style=\"display:flex;align-items:center;justify-content:space-between;gap:10px;margin:6px 0;\">' +\n                '<span style=\"font-weight:700;\">' + escapePinText(r.m.name) + '</span>' +\n                '<span>' + kmText(r.km) + (r.road ? '' : '*') + '</span>' +\n                '<a href=\"#\" onclick=\"startNav(event, ' + r.m.lat + ', ' + r.m.lng + ')\" style=\"background:#1d4ed8;color:#fff;border-radius:8px;padding:5px 10px;font-size:0.75rem;font-weight:800;\">Go</a>' +\n                '</div>';\n            });\n            html += '<div style=\"font-size:0.7rem;opacity:0.75;margin-top:4px;\">* straight line</div>';\n            panel.innerHTML = html;\n          });\n        });\n      }\n      if (userPos) { show(); return; }\n      panel.style.display = 'block';\n      panel.innerHTML = 'Getting your location...';\n      if (!navigator.geolocation) { panel.innerHTML = 'This device cannot share its location.'; return; }\n      navigator.geolocation.getCurrentPosition(function (pos) {\n        userPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };\n        show();\n      }, function () {\n        panel.innerHTML = 'Location is off. Turn it on to measure the distance to the shops.';\n      }, { enableHighAccuracy: true, timeout: 12000 });\n    }\n\n    renderMarkers();\n  </script>\n</body>\n</html>`;\n\nreturn [{ json: { html: mapHtml, status: 200 } }];"
+      },
+      "id": "c54f1ccb-990a-406e-a521-7cc18df93440",
+      "name": "Build Interactive Map HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2400,
+        -1904
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": "={{ $json.status || 200 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "5e5671fb-2d41-4c2d-9ea3-2f71d24e2762",
+      "name": "Render Map HTML Web Page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -2160,
+        -1904
+      ]
+    },
+    {
+      "parameters": {
+        "path": "insights",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "d27ca813-d671-4df5-8a5e-282dc5467c0a",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        -2880,
+        -1456
+      ],
+      "webhookId": "c1b09f05-20d3-4249-a259-40f245d53a6e"
+    },
+    {
+      "parameters": {
+        "authentication": "databaseToken",
+        "tableId": 1286353,
+        "additionalOptions": {
+          "filters": {
+            "fields": [
+              {
+                "field": 11875465,
+                "value": "={{ $json.query.slug }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "bd7c810d-3b2c-464a-9a69-b1e16ba56e79",
+      "name": "Get many rows1",
+      "type": "n8n-nodes-base.baserow",
+      "typeVersion": 1.1,
+      "position": [
+        -2656,
+        -1456
+      ],
+      "credentials": {
+        "baserowTokenApi": {
+          "id": "gCNrohdhNFB8nXXx",
+          "name": "Baserow Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const query = $input.first().json.query || {};\nconst slug = query.slug || 'store-default';\n\n// Pull merchant record from Baserow lookup\nconst rows = $input.all();\nlet merchantRow = rows.find(r => r.json.slug === slug) || rows[0]?.json || {};\n\nlet merchantName = merchantRow.merchant_name || merchantRow.name || (slug !== 'store-default' ? slug.split('-')[0].toUpperCase() : 'Merchant Portal');\nlet visitors = merchantRow.visitors || 2;\nlet revenue = merchantRow.revenue || 0.00;\n\n// Parse products from Baserow\nlet productListHtml = '<div style=\"color: #64748b; font-size: 0.9rem; text-align: center; padding: 10px;\">No active products indexed yet.</div>';\ntry {\n  let rawProducts = merchantRow.products_and_services || merchantRow.parsedData?.products_and_services;\n  if (typeof rawProducts === 'string') rawProducts = JSON.parse(rawProducts);\n  \n  if (Array.isArray(rawProducts) && rawProducts.length > 0) {\n    productListHtml = rawProducts.map(p => `\n      <div style=\"display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #f1f5f9;\">\n        <div>\n          <div style=\"font-weight: 700; font-size: 0.9rem; color: #0f172a;\">${p.name}</div>\n          <div style=\"font-size: 0.78rem; color: #64748b;\">${p.category || 'Active Listing'}</div>\n        </div>\n        <div class=\"localizable-price\" data-base-ugx=\"${(p.price_local || p.price || 0)}\" style=\"font-weight: 800; font-size: 0.9rem; color: #003087;\">USh ${(p.price_local || p.price || 0).toLocaleString()}</div>\n      </div>\n    `).join('');\n  }\n} catch(e) {}\n\nconst htmlResponse = `<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <meta http-equiv=\"refresh\" content=\"10\">\n  <title>${merchantName} | Comprehensive Insights</title>\n  <link href=\"https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap\" rel=\"stylesheet\">\n  <style>\n    :root { --bg-cream: #f7f6f0; --text-dark: #1c1917; --text-muted: #57534e; --paypal-blue: #003087; }\n    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }\n    body { background: var(--bg-cream); color: var(--text-dark); padding: 40px 20px; display: flex; justify-content: center; }\n    .container { width: 100%; max-width: 540px; background: #ffffff; padding: 30px; border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.06); border: 1px solid rgba(0,0,0,0.06); }\n    .header { font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 6px; }\n    .title { font-size: 1.6rem; font-weight: 800; color: #0f172a; margin-bottom: 1.8rem; }\n    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }\n    .card { background: #f8fafc; border: 1px solid #e2e8f0; padding: 20px; border-radius: 14px; margin-bottom: 1rem; }\n    .card-label { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px; }\n    .card-value { font-size: 1.6rem; font-weight: 800; color: var(--paypal-blue); }\n    .section-box { background: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 14px; margin-bottom: 1rem; }\n    .section-title { font-size: 0.85rem; font-weight: 800; text-transform: uppercase; color: #0f172a; margin-bottom: 10px; letter-spacing: 0.05em; }\n    .footer { text-align: center; margin-top: 2rem; font-size: 0.78rem; color: var(--text-muted); }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">X-Link Secure Intelligence</div>\n    <div class=\"title\">${merchantName} Performance Hub</div>\n    \n    <div class=\"grid-2\">\n      <div class=\"card\" style=\"margin-bottom:0;\">\n        <div class=\"card-label\">Total Revenue</div>\n        <div class=\"card-value localizable-price\" data-base-ugx=\"${Math.round(Number(revenue) * 3700)}\">USh ${(Math.round(Number(revenue) * 3700)).toLocaleString()}</div>\n      </div>\n      <div class=\"card\" style=\"margin-bottom:0;\">\n        <div class=\"card-label\">Page Visitors</div>\n        <div class=\"card-value\">${visitors}</div>\n      </div>\n    </div>\n\n    <div class=\"card\" style=\"margin-top: 1rem;\">\n      <div class=\"card-label\">Storefront Status</div>\n      <div class=\"card-value\" style=\"font-size: 1.1rem; color: #22c55e; margin-top: 4px;\">🟢 Live & Operational</div>\n    </div>\n\n    <div class=\"section-box\">\n      <div class=\"section-title\">Active Catalog & Inventory</div>\n      ${productListHtml}\n    </div>\n\n    <div class=\"footer\">Powered by X-Link Automated Infrastructure</div>\n  </div>\n  <script>\n  async function localizeCurrency() {\n    try {\n      const geoRes = await fetch('https://ipapi.co/json/');\n      const geoData = await geoRes.json();\n      const userCurrency = geoData.currency || 'USD';\n\n      const rateRes = await fetch('https://open.er-api.com/v6/latest/USD');\n      const rateData = await rateRes.json();\n      const usdToUgxRate = 3700;\n      const rateForUserCurrency = rateData.rates[userCurrency] || 0.00027;\n      const ugxToUserRate = (1 / usdToUgxRate) * rateForUserCurrency;\n\n      const symbols = {\n        USD: '$',\n        EUR: '€',\n        GBP: '£',\n        BOB: 'Bs ',\n        UGX: 'USh ',\n        KES: 'KSh '\n      };\n      const symbol = symbols[userCurrency] || (userCurrency + ' ');\n\n      document.querySelectorAll('.localizable-price').forEach(el => {\n        const baseVal = parseFloat(el.getAttribute('data-base-ugx')) || 0;\n        const converted = Math.round(baseVal * ugxToUserRate);\n        el.innerText = symbol + ' ' + converted.toLocaleString();\n      });\n    } catch (e) {\n      console.log('Currency localization fallback active.');\n    }\n  }\n  window.addEventListener('DOMContentLoaded', localizeCurrency);\n  </script>\n</body>\n</html>`;\n\nreturn [{ \n  json: { \n    html: htmlResponse, \n    status: 200 \n  } \n}];"
+      },
+      "id": "5ee7d39b-f658-4193-9d73-a25b1c8b203c",
+      "name": "Insights Code Node",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2432,
+        -1456
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "content-type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "045c308e-3557-4123-a9a1-3a0f66723936",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -2208,
+        -1456
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook (Report Vendor)": {
+      "main": [
+        [
+          {
+            "node": "Respond to Reporter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Web Server Trigger (GET /storefront)": {
+      "main": [
+        [
+          {
+            "node": "Get many rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many rows": {
+      "main": [
+        [
+          {
+            "node": "Lookup Storefront by Slug",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Storefront by Slug": {
+      "main": [
+        [
+          {
+            "node": "Render HTML Web Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Web Server Trigger (GET /map)": {
+      "main": [
+        [
+          {
+            "node": "Get all rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get all rows": {
+      "main": [
+        [
+          {
+            "node": "Build Interactive Map HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Interactive Map HTML": {
+      "main": [
+        [
+          {
+            "node": "Render Map HTML Web Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get many rows1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many rows1": {
+      "main": [
+        [
+          {
+            "node": "Insights Code Node",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insights Code Node": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "644f2f7f-8ff3-4ad6-a8e9-9f5dc4b83c8b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "98fe485aecbb71ae130ba72781705a2f468fa1ba7cac671dd85f4554ff7c942a"
+  },
+  "nodeGroups": [],
+  "id": "TYpTaaiOHoFu6u0t",
+  "tags": []
+}

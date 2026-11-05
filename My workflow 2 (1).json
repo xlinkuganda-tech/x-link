@@ -1,0 +1,322 @@
+{
+  "name": "My workflow 2",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "purchase-domain",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f9ca9676-d45a-43f2-b5fc-c361b522eeda",
+      "name": "Domain Purchase Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        64
+      ],
+      "webhookId": "purchase-domain-webhook-id"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Extract incoming payment, domain, and merchant details\nconst inputData = $input.first().json;\nconst body = inputData.body || inputData;\nconst requestedDomain = String(body.purchased_domain || '').toLowerCase().trim();\nconst merchantSlug = body.slug || '';\nconst merchantEmail = body.merchant_email || 'support@xlinkug.com';\nconst merchantName = body.merchant_name || 'X-Link Merchant';\nconst apiToken = body.cloudflare_api_token || '';\n\nif (!requestedDomain) {\n  return [{ json: { success: false, error: \"No target domain provided for provisioning.\" } }];\n}\n\nreturn [{\n  json: {\n    requestedDomain,\n    merchantSlug,\n    merchantEmail,\n    merchantName,\n    apiToken\n  }\n}];"
+      },
+      "id": "692f3097-6bc0-439f-8888-75cdfcf8ad0d",
+      "name": "Parse Domain Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -272,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloudflare.com/client/v4/accounts/1170c73b3244e4c3da0eb74a18e83055/registrar/domain-check",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "cloudflareApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"domains\": [\"{{ $json.requestedDomain }}\"]\n}",
+        "options": {}
+      },
+      "id": "c1a7e0d4-5b82-4f39-a6d1-7e0c9b2f4a58",
+      "name": "Check Domain Availability",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -48,
+        64
+      ],
+      "credentials": {
+        "cloudflareApi": {
+          "id": "vSZFynKD6yiSQXwE",
+          "name": "Cloudflare account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const parsed = $('Parse Domain Request').first().json;\nconst res = $input.first().json || {};\nconst body = res.body || res;\nconst entry = Array.isArray(body.domains) && body.domains.length > 0 ? body.domains[0] : {};\n\nconst registrable = entry.registrable === true;\nconst pricing = entry.pricing || {};\nconst reason = entry.reason || '';\n\nconst REASON_TEXT = {\n  domain_unavailable: 'that domain is already taken.',\n  domain_premium: 'that domain is premium priced, which the registrar API cannot register.',\n  extension_not_supported: 'that domain extension is not supported.',\n  extension_not_supported_via_api: 'that domain extension can only be registered in the Cloudflare dashboard.',\n  extension_disallows_registration: 'that domain extension is not accepting new registrations.'\n};\n\nreturn [{\n  json: {\n    ...parsed,\n    available: registrable,\n    reason,\n    reasonText: REASON_TEXT[reason] || 'that domain cannot be registered right now.',\n    price: pricing.registration_cost || '',\n    currency: pricing.currency || '',\n    message: registrable\n      ? 'Good news: ' + parsed.requestedDomain + ' is available' + (pricing.registration_cost ? ' at ' + pricing.currency + ' ' + pricing.registration_cost + ' for the first year.' : '.')\n      : 'Sorry, ' + (REASON_TEXT[reason] || 'that domain cannot be registered right now.')\n  }\n}];"
+      },
+      "id": "d4b8f1c6-9a35-4e72-b8c4-1f6d0a3e7b29",
+      "name": "Decide Availability",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cond-available",
+              "leftValue": "={{ $json.available }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e6c2a8b7-3d41-4a95-9f28-5b7e1c0d6a43",
+      "name": "Only If Available",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        416,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloudflare.com/client/v4/accounts/1170c73b3244e4c3da0eb74a18e83055/registrar/registrations",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "cloudflareApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"domain\": \"{{ $json.requestedDomain }}\",\n  \"auto_renew\": true,\n  \"registrant_contact\": {\n    \"email\": \"{{ $json.merchantEmail }}\",\n    \"name\": \"{{ $json.merchantName }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "34753c89-2fd8-40f6-8bee-c5d6556c1fcc",
+      "name": "Cloudflare Registrar API1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        256,
+        -96
+      ],
+      "credentials": {
+        "cloudflareApi": {
+          "id": "vSZFynKD6yiSQXwE",
+          "name": "Cloudflare account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloudflare.com/client/v4/zones/fe1040dbba63cac54a1d4a9f8d72fdd6/dns_records",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "cloudflareApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"CNAME\",\n  \"name\": \"{{ $('Parse Domain Request').first().json.requestedDomain }}\",\n  \"content\": \"orchid-frigatebird.pikapod.net\",\n  \"ttl\": 1,\n  \"proxied\": true\n}",
+        "options": {}
+      },
+      "id": "b8d4bb3e-cd35-4a2f-991f-4bf4ab5d6b6e",
+      "name": "Configure Cloudflare CNAME DNS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        496,
+        64
+      ],
+      "credentials": {
+        "cloudflareApi": {
+          "id": "vSZFynKD6yiSQXwE",
+          "name": "Cloudflare account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst parsedInput = $('Parse Domain Request').first().json;\nconst requestedDomain = parsedInput.requestedDomain;\nconst merchantSlug = parsedInput.merchantSlug;\n\nlet provisioningStatus = 'ACTIVE';\nlet errorDetails = null;\n\ntry {\n  // Save mapping to global workflow static data for the router\n  const staticData = $getWorkflowStaticData('global');\n  staticData.customDomains = staticData.customDomains || {};\n  staticData.customDomains[requestedDomain] = merchantSlug;\n} catch (error) {\n  provisioningStatus = 'ERROR';\n  errorDetails = error.message;\n}\n\nreturn [{\n  json: {\n    success: provisioningStatus === 'ACTIVE',\n    domain: requestedDomain,\n    slug: merchantSlug,\n    live_url: `https://${requestedDomain}`,\n    status: provisioningStatus,\n    error: errorDetails,\n    message: `Success! Domain ${requestedDomain} purchased, DNS mapped to PikaPods, and proxied live.`\n  }\n}];"
+      },
+      "id": "a4e2ef63-f57c-496c-a67c-0c188e1e9d0b",
+      "name": "Finalize Global Mapping",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "2f5ce2da-5e1c-4526-a86f-0fc160e4158d",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        944,
+        64
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Domain Purchase Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Domain Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Domain Request": {
+      "main": [
+        [
+          {
+            "node": "Check Domain Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Domain Availability": {
+      "main": [
+        [
+          {
+            "node": "Decide Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide Availability": {
+      "main": [
+        [
+          {
+            "node": "Only If Available",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Only If Available": {
+      "main": [
+        [
+          {
+            "node": "Cloudflare Registrar API1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cloudflare Registrar API1": {
+      "main": [
+        [
+          {
+            "node": "Configure Cloudflare CNAME DNS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configure Cloudflare CNAME DNS": {
+      "main": [
+        [
+          {
+            "node": "Finalize Global Mapping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Global Mapping": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "52859083-1acc-41d9-ae73-71d2af40aed4",
+  "meta": {
+    "instanceId": "98fe485aecbb71ae130ba72781705a2f468fa1ba7cac671dd85f4554ff7c942a"
+  },
+  "nodeGroups": [
+    {
+      "id": "80e7f27c-fef0-4499-948a-2ce2822fcae8",
+      "name": "Check domain availability",
+      "nodeIds": [
+        "692f3097-6bc0-439f-8888-75cdfcf8ad0d",
+        "c1a7e0d4-5b82-4f39-a6d1-7e0c9b2f4a58",
+        "d4b8f1c6-9a35-4e72-b8c4-1f6d0a3e7b29",
+        "e6c2a8b7-3d41-4a95-9f28-5b7e1c0d6a43"
+      ],
+      "description": "Asks Cloudflare whether the requested domain can be registered, and reports its first-year price"
+    },
+    {
+      "id": "6a49522e-d15a-4884-9b2f-bb05fc3670fa",
+      "name": "Register and map domain",
+      "nodeIds": [
+        "34753c89-2fd8-40f6-8bee-c5d6556c1fcc",
+        "b8d4bb3e-cd35-4a2f-991f-4bf4ab5d6b6e",
+        "a4e2ef63-f57c-496c-a67c-0c188e1e9d0b"
+      ],
+      "description": "Registers the domain, points its DNS at the hosting server, and saves the merchant mapping"
+    }
+  ],
+  "id": "BrLxCFvXb57PFGx4",
+  "tags": []
+}

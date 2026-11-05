@@ -1,0 +1,67 @@
+{
+  "name": "X-Link Market Intelligence Tool",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst category = String(input.business_category || 'General').toLowerCase();\nconst topic = String(input.query_topic || '').toLowerCase();\n\nlet advice = \"\";\n\nif (category.includes('tech') || category.includes('electronics') || category.includes('hardware')) {\n  advice = \"Global shipping lanes and component manufacturing hubs are facing minor logistics adjustments. For tech importers in Nasser Road/Kampala, component acquisition costs are projected to trend upward. Recommendation: Secure current wholesale stock levels for fast-moving items (chargers, protectors, cables) to protect profit margins before restocking prices shift.\";\n} else if (category.includes('fashion') || category.includes('boutique') || category.includes('wear')) {\n  advice = \"Cross-border transport and textile supply costs are stabilizing, but seasonal demand spikes are approaching. Recommendation: Lock in regional apparel orders early and focus marketing on unique urban styles to capture high-margin retail traffic.\";\n} else {\n  advice = \"Regional currency shifts (USD/UGX) and fuel price adjustments are impacting transport overheads. Recommendation: Optimize local delivery batching and maintain 14-day buffer stock on high-demand inventory.\";\n}\n\nreturn [{\n  json: {\n    status: \"success\",\n    market_advisory: advice,\n    action_tier: \"PROACTIVE_PROTECTION\",\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        496,
+        352
+      ],
+      "id": "16f8fa9b-b177-4a04-98bd-9de2e5622719",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "business_category"
+            },
+            {
+              "name": "query_topic"
+            }
+          ]
+        },
+        "returnOutput": "allRuns"
+      },
+      "id": "c055762a-8fe7-4141-a639-df2372f30060",
+      "typeVersion": 1.1,
+      "name": "X-Link Market Intelligence Tool",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "position": [
+        272,
+        352
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "X-Link Market Intelligence Tool": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "65268f31-efdc-4c5a-94d0-5c388bd798cd",
+  "meta": {
+    "instanceId": "98fe485aecbb71ae130ba72781705a2f468fa1ba7cac671dd85f4554ff7c942a"
+  },
+  "nodeGroups": [],
+  "id": "vVT74ALuRbcb0wDp",
+  "tags": []
+}
